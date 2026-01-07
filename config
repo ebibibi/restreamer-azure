@@ -1,0 +1,17 @@
+# Restreamer Azure Configuration
+
+# リソースグループ名
+RESOURCE_GROUP=restreamer-rg
+
+# コンテナ名
+CONTAINER_NAME=restreamer
+
+# Azureリージョン
+LOCATION=japaneast
+
+# コンテナスペック
+CPU=1
+MEMORY=1.5
+
+# コンテナイメージ
+IMAGE=datarhei/restreamer:latest
