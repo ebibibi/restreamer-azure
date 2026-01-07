@@ -2,35 +2,41 @@
 
 Azure Container Instances (ACI) で [Restreamer](https://github.com/datarhei/restreamer) を必要な時だけ起動し、終わったら削除するためのシンプルなスクリプト。
 
+設定は自動的にバックアップ・リストアされるため、毎回同じ配信設定で使えます。
+
 ## 前提条件
 
 - Azure CLI (`az`) がインストール済み
+- `curl` がインストール済み
+- `python3` がインストール済み
 
 ## 使い方
 
-### 起動
+### 初回セットアップ
+
+1. `config` ファイルを編集してパスワードを設定
+
+```bash
+# config ファイル内
+RESTREAMER_USERNAME=admin
+RESTREAMER_PASSWORD=yourpassword  # 変更してください
+```
+
+2. 起動
 
 ```bash
 ./restreamer.sh start
 ```
 
-実行すると、以下のような確認画面が表示されます：
+3. 表示されたWeb UIにアクセスして配信先を設定
 
-```
-=== 展開設定の確認 ===
+### 2回目以降
 
-Azureアカウント:     user@example.com
-サブスクリプション:  My Subscription
-                     (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-
-展開先リージョン:    japaneast
-リソースグループ:    restreamer-rg
-コンテナ名:          restreamer
-
-この設定で展開しますか? [y/N]:
+```bash
+./restreamer.sh start
 ```
 
-`y` で展開開始、それ以外で Azure CLI の設定方法が表示されます。
+前回の設定が自動的に復元されます。
 
 ### 状態確認
 
@@ -50,6 +56,8 @@ Azureアカウント:     user@example.com
 ./restreamer.sh stop
 ```
 
+設定がバックアップされてからコンテナが削除されます。
+
 ## 設定
 
 設定は `config` ファイルで管理されます：
@@ -67,14 +75,24 @@ LOCATION=japaneast
 # コンテナスペック
 CPU=1
 MEMORY=1.5
+
+# Restreamer認証情報
+RESTREAMER_USERNAME=admin
+RESTREAMER_PASSWORD=changeme123
 ```
 
-リージョンやリソースグループを変更したい場合は、このファイルを編集してください。
+## バックアップ
+
+- 設定は `backup/` ディレクトリに自動保存されます
+- `stop` 時に自動バックアップ
+- `start` 時に自動リストア
+- `backup/` は `.gitignore` に含まれているため、Gitにはコミットされません
 
 ## 配信の流れ
 
 1. `./restreamer.sh start` でRestreamerを起動
-2. 表示されたWeb UIにアクセス
-3. Restreamerの管理画面で初期設定・配信先を設定
+2. 表示されたWeb UIにアクセスしてログイン
+3. Restreamerの管理画面で配信先（YouTube, Twitchなど）を設定
 4. OBSなどから表示されたRTMP URLに配信
-5. 配信終了後、`./restreamer.sh stop` で削除（課金停止）
+5. 配信終了後、`./restreamer.sh stop` で削除（設定はバックアップされる）
+6. 次回は `./restreamer.sh start` で同じ設定が復元される

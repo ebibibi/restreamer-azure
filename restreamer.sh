@@ -3,6 +3,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config"
+BACKUP_DIR="$SCRIPT_DIR/backup"
+BACKUP_DB_FILE="$BACKUP_DIR/db.json"
 
 # Load config
 if [ -f "$CONFIG_FILE" ]; then
@@ -18,11 +20,12 @@ Usage: $0 <command>
 
 Commands:
     start   - Create ACI and start Restreamer
-    stop    - Delete ACI (stop billing)
+    stop    - Backup config and delete ACI (stop billing)
     status  - Show current status and URL
     logs    - Show container logs
 
 Configuration is read from: $CONFIG_FILE
+Backup is saved to: $BACKUP_DIR
 EOF
     exit 1
 }
@@ -45,6 +48,78 @@ show_az_help() {
 EOF
 }
 
+get_fqdn() {
+    az container show \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$CONTAINER_NAME" \
+        --query "ipAddress.fqdn" \
+        --output tsv 2>/dev/null
+}
+
+wait_for_api() {
+    local fqdn="$1"
+    local max_attempts=30
+    local attempt=1
+
+    echo "Waiting for Restreamer API to be ready..."
+    while [ $attempt -le $max_attempts ]; do
+        local http_code
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://${fqdn}:8080/api" 2>/dev/null || echo "000")
+
+        if [ "$http_code" = "200" ] || [ "$http_code" = "401" ]; then
+            echo "API is ready."
+            return 0
+        fi
+        echo "  Attempt $attempt/$max_attempts (HTTP: $http_code)..."
+        sleep 5
+        attempt=$((attempt + 1))
+    done
+    echo "Warning: API did not become ready in time."
+    return 1
+}
+
+backup_config() {
+    echo "Backing up Restreamer configuration..."
+
+    mkdir -p "$BACKUP_DIR"
+
+    # Use az container exec to read db.json
+    local db_content
+    db_content=$(az container exec \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$CONTAINER_NAME" \
+        --exec-command "cat /core/config/db.json" 2>/dev/null)
+
+    if [ -n "$db_content" ]; then
+        echo "$db_content" > "$BACKUP_DB_FILE"
+        echo "Configuration backed up to: $BACKUP_DB_FILE"
+        return 0
+    else
+        echo "Warning: Failed to backup configuration."
+        return 1
+    fi
+}
+
+restore_config() {
+    if [ ! -f "$BACKUP_DB_FILE" ]; then
+        echo "No backup found. Skipping restore."
+        return 0
+    fi
+
+    local fqdn
+    fqdn=$(get_fqdn)
+
+    echo "Restoring Restreamer configuration from backup..."
+
+    python3 "$SCRIPT_DIR/restore.py" \
+        "http://${fqdn}:8080" \
+        "$RESTREAMER_USERNAME" \
+        "$RESTREAMER_PASSWORD" \
+        "$BACKUP_DB_FILE"
+
+    return $?
+}
+
 confirm_deployment() {
     echo "=== 展開設定の確認 ==="
     echo ""
@@ -63,6 +138,17 @@ confirm_deployment() {
     echo "展開先リージョン:    $LOCATION"
     echo "リソースグループ:    $RESOURCE_GROUP"
     echo "コンテナ名:          $CONTAINER_NAME"
+    echo ""
+    echo "Restreamer認証:"
+    echo "  Username: $RESTREAMER_USERNAME"
+    echo "  Password: $RESTREAMER_PASSWORD"
+    echo ""
+
+    if [ -f "$BACKUP_DB_FILE" ]; then
+        echo "バックアップ:        あり (起動後に自動復元します)"
+    else
+        echo "バックアップ:        なし (初回セットアップ)"
+    fi
     echo ""
 
     read -p "この設定で展開しますか? [y/N]: " answer
@@ -106,27 +192,47 @@ cmd_start() {
         --memory "$MEMORY" \
         --ip-address Public \
         --ports 8080 1935 \
-        --dns-name-label "$DNS_LABEL"
+        --dns-name-label "$DNS_LABEL" \
+        --environment-variables \
+            CORE_API_AUTH_ENABLE=true \
+            CORE_API_AUTH_USERNAME="$RESTREAMER_USERNAME" \
+            CORE_API_AUTH_PASSWORD="$RESTREAMER_PASSWORD"
 
     echo ""
     echo "Container created!"
     echo ""
+
     cmd_status
+
+    # Wait and restore config if backup exists
+    if [ -f "$BACKUP_DB_FILE" ]; then
+        echo ""
+        FQDN=$(get_fqdn)
+        if wait_for_api "$FQDN"; then
+            restore_config
+        fi
+    fi
 }
 
 cmd_stop() {
-    echo "Stopping and deleting container: $CONTAINER_NAME"
+    echo "Stopping container: $CONTAINER_NAME"
 
-    if az container show --resource-group "$RESOURCE_GROUP" --name "$CONTAINER_NAME" &>/dev/null; then
-        az container delete \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$CONTAINER_NAME" \
-            --yes \
-            --output none
-        echo "Container deleted. Billing stopped."
-    else
+    if ! az container show --resource-group "$RESOURCE_GROUP" --name "$CONTAINER_NAME" &>/dev/null; then
         echo "Container not found."
+        return 0
     fi
+
+    # Backup before deleting
+    backup_config || true
+
+    echo ""
+    echo "Deleting container..."
+    az container delete \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$CONTAINER_NAME" \
+        --yes \
+        --output none
+    echo "Container deleted. Billing stopped."
 }
 
 cmd_status() {
@@ -135,11 +241,7 @@ cmd_status() {
         exit 1
     fi
 
-    FQDN=$(az container show \
-        --resource-group "$RESOURCE_GROUP" \
-        --name "$CONTAINER_NAME" \
-        --query "ipAddress.fqdn" \
-        --output tsv)
+    FQDN=$(get_fqdn)
 
     STATE=$(az container show \
         --resource-group "$RESOURCE_GROUP" \
@@ -160,6 +262,10 @@ cmd_status() {
     echo "RTMP URL:   rtmp://${FQDN}:1935/live/stream"
     echo ""
     echo "IP Address: $IP"
+    echo ""
+    echo "Login:"
+    echo "  Username: $RESTREAMER_USERNAME"
+    echo "  Password: $RESTREAMER_PASSWORD"
 }
 
 cmd_logs() {

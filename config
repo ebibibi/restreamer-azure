@@ -15,3 +15,7 @@ MEMORY=1.5
 
 # コンテナイメージ
 IMAGE=datarhei/restreamer:latest
+
+# Restreamer認証情報
+RESTREAMER_USERNAME=admin
+RESTREAMER_PASSWORD=changeme123
