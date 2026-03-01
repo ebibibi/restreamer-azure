@@ -19,3 +19,8 @@ IMAGE=datarhei/restreamer:latest
 # Restreamer認証情報
 RESTREAMER_USERNAME=admin
 RESTREAMER_PASSWORD=changeme123
+
+# 起動時のDiscord通知（省略可）
+# Discord Webhook URLまたはBot APIのエンドポイントを指定するとstop忘れ防止通知が届く
+# 例: NOTIFY_DISCORD_URL=https://discord.com/api/webhooks/xxx/yyy
+NOTIFY_DISCORD_URL=

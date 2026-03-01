@@ -175,7 +175,7 @@ confirm_deployment() {
 }
 
 notify_discord_start() {
-    [ -z "${CCDB_API_URL:-}" ] && return 0
+    [ -z "${NOTIFY_DISCORD_URL:-}" ] && return 0
 
     local fqdn
     fqdn=$(get_fqdn 2>/dev/null || echo "unknown")
@@ -190,9 +190,9 @@ notify_discord_start() {
     local message
     message="🔴 **Restreamer 起動中（課金中）**\n\`\`\`\nWeb UI: http://${fqdn}:8080\nRTMP:   rtmp://${fqdn}:1935/live/stream\n\`\`\`${timer_msg}\n\n停止コマンド:\n\`\`\`bash\ncd ~/restreamer-azure && ./restreamer.sh stop\n\`\`\`"
 
-    curl -s -X POST "${CCDB_API_URL}/api/message" \
+    curl -s -X POST "${NOTIFY_DISCORD_URL}" \
         -H "Content-Type: application/json" \
-        -d "{\"message\": \"${message}\"}" &>/dev/null || true
+        -d "{\"content\": \"${message}\"}" &>/dev/null || true
 }
 
 ensure_resource_group() {
