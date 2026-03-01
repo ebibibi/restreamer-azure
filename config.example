@@ -10,8 +10,8 @@ CONTAINER_NAME=restreamer
 LOCATION=japaneast
 
 # コンテナスペック（4ストリーム同時配信の場合は CPU=4, MEMORY=4 を推奨）
-CPU=4
-MEMORY=4
+CPU=8
+MEMORY=8
 
 # コンテナイメージ
 IMAGE=datarhei/restreamer:latest
