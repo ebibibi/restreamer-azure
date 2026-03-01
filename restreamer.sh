@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config"
 BACKUP_DIR="$SCRIPT_DIR/backup"
 BACKUP_DB_FILE="$BACKUP_DIR/db.json"
+AUTO_YES=false
+STOP_AFTER_MINUTES=0  # 0 = タイマーなし
 
 # Load config
 if [ -f "$CONFIG_FILE" ]; then
@@ -16,7 +18,11 @@ fi
 
 usage() {
     cat << EOF
-Usage: $0 <command>
+Usage: $0 [-y] [-t <minutes>] <command>
+
+Options:
+    -y           - Skip confirmation prompt (auto-yes)
+    -t <minutes> - Auto-stop after specified minutes (0 = disabled)
 
 Commands:
     start   - Create ACI and start Restreamer
@@ -151,6 +157,11 @@ confirm_deployment() {
     fi
     echo ""
 
+    if $AUTO_YES; then
+        echo "自動確認（-y オプション）"
+        return 0
+    fi
+
     read -p "この設定で展開しますか? [y/N]: " answer
     case "$answer" in
         [yY]|[yY][eE][sS])
@@ -161,6 +172,27 @@ confirm_deployment() {
             return 1
             ;;
     esac
+}
+
+notify_discord_start() {
+    [ -z "${CCDB_API_URL:-}" ] && return 0
+
+    local fqdn
+    fqdn=$(get_fqdn 2>/dev/null || echo "unknown")
+
+    local timer_msg=""
+    if [ "$STOP_AFTER_MINUTES" -gt 0 ]; then
+        timer_msg="\n⏱ ${STOP_AFTER_MINUTES}分後に自動停止します"
+    else
+        timer_msg="\n⚠️ 自動停止なし。終わったら忘れずに停止してね"
+    fi
+
+    local message
+    message="🔴 **Restreamer 起動中（課金中）**\n\`\`\`\nWeb UI: http://${fqdn}:8080\nRTMP:   rtmp://${fqdn}:1935/live/stream\n\`\`\`${timer_msg}\n\n停止コマンド:\n\`\`\`bash\ncd ~/restreamer-azure && ./restreamer.sh stop\n\`\`\`"
+
+    curl -s -X POST "${CCDB_API_URL}/api/message" \
+        -H "Content-Type: application/json" \
+        -d "{\"message\": \"${message}\"}" &>/dev/null || true
 }
 
 ensure_resource_group() {
@@ -212,6 +244,18 @@ cmd_start() {
             restore_config
         fi
     fi
+
+    # Auto-stop timer
+    if [ "$STOP_AFTER_MINUTES" -gt 0 ]; then
+        local stop_time
+        stop_time=$(date -d "+${STOP_AFTER_MINUTES} minutes" "+%H:%M" 2>/dev/null || date -v "+${STOP_AFTER_MINUTES}M" "+%H:%M")
+        nohup bash -c "sleep $((STOP_AFTER_MINUTES * 60)) && cd '$SCRIPT_DIR' && ./restreamer.sh -y stop" &>/dev/null &
+        echo ""
+        echo "⏱ 自動停止タイマー: ${STOP_AFTER_MINUTES}分後（約 ${stop_time}）に自動停止します（PID: $!）"
+    fi
+
+    # Discord notification
+    notify_discord_start
 }
 
 cmd_stop() {
@@ -276,6 +320,15 @@ cmd_logs() {
 }
 
 # Main
+while getopts "yt:" opt; do
+    case "$opt" in
+        y) AUTO_YES=true ;;
+        t) STOP_AFTER_MINUTES="$OPTARG" ;;
+        *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+
 case "${1:-}" in
     start)  cmd_start ;;
     stop)   cmd_stop ;;

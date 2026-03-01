@@ -14,10 +14,11 @@ Azure Container Instances (ACI) で [Restreamer](https://github.com/datarhei/res
 
 ### 初回セットアップ
 
-1. `config` ファイルを編集してパスワードを設定
+1. `config` ファイルを作成してパスワードを設定
 
 ```bash
-# config ファイル内
+cp config.example config
+# config ファイルを編集してパスワードを変更してください
 RESTREAMER_USERNAME=admin
 RESTREAMER_PASSWORD=yourpassword  # 変更してください
 ```

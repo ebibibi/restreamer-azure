@@ -1,2 +1,5 @@
 # Backup directory (contains Restreamer config with credentials)
 backup/
+
+# Local config (contains credentials — copy from config.example)
+config
