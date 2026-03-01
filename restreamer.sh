@@ -25,10 +25,11 @@ Options:
     -t <minutes> - Auto-stop after specified minutes (0 = disabled)
 
 Commands:
-    start   - Create ACI and start Restreamer
-    stop    - Backup config and delete ACI (stop billing)
-    status  - Show current status and URL
-    logs    - Show container logs
+    start      - Create ACI and start Restreamer
+    stop       - Backup config and delete ACI (stop billing)
+    status     - Show current status and URL
+    checklist  - Show pre-broadcast checklist (OBS settings, output destinations)
+    logs       - Show container logs
 
 Configuration is read from: $CONFIG_FILE
 Backup is saved to: $BACKUP_DIR
@@ -256,6 +257,10 @@ cmd_start() {
 
     # Discord notification
     notify_discord_start
+
+    # 配信前チェックリストを自動表示
+    echo ""
+    cmd_checklist
 }
 
 cmd_stop() {
@@ -312,6 +317,87 @@ cmd_status() {
     echo "  Password: $RESTREAMER_PASSWORD"
 }
 
+cmd_checklist() {
+    if [ ! -f "$BACKUP_DB_FILE" ]; then
+        echo "バックアップが見つかりません。先に start を実行してください。"
+        exit 1
+    fi
+
+    # コンテナが起動中かチェック
+    local fqdn=""
+    if az container show --resource-group "$RESOURCE_GROUP" --name "$CONTAINER_NAME" &>/dev/null 2>&1; then
+        fqdn=$(get_fqdn)
+    fi
+
+    BACKUP_DB_FILE="$BACKUP_DB_FILE" \
+    FQDN="$fqdn" \
+    RESTREAMER_USERNAME="$RESTREAMER_USERNAME" \
+    RESTREAMER_PASSWORD="$RESTREAMER_PASSWORD" \
+    python3 << 'PYEOF'
+import json, os
+
+with open(os.environ["BACKUP_DB_FILE"]) as f:
+    db = json.load(f)
+
+processes = db.get("process", {})
+fqdn = os.environ.get("FQDN", "")
+
+# ingest から stream key を取得
+stream_key = ""
+for pid, proc in processes.items():
+    if ":ingest:" in pid and "_snapshot" not in pid:
+        for inp in proc.get("config", {}).get("input", []):
+            addr = inp.get("address", "")
+            if "rtmp,name=" in addr:
+                stream_key = addr.split("name=")[1].split("}")[0]
+                break
+
+# egress から配信先ラベルを取得
+platforms = {
+    "facebook.com": "Facebook Live",
+    "youtube.com":  "YouTube Live",
+    "x.com":        "X (Twitter)",
+    "linkedin.com": "LinkedIn Live",
+    "twitch.tv":    "Twitch",
+}
+outputs = []
+for pid, proc in processes.items():
+    if ":egress:" in pid:
+        for out in proc.get("config", {}).get("output", []):
+            addr = out.get("address", "")
+            label = next((v for k, v in platforms.items() if k in addr), addr[:60])
+            outputs.append(label)
+
+print("=" * 50)
+print("配信前チェックリスト")
+print("=" * 50)
+print()
+
+if fqdn:
+    print("[Restreamer]")
+    print(f"  Web UI  : http://{fqdn}:8080")
+    print(f"  ログイン: {os.environ['RESTREAMER_USERNAME']} / {os.environ['RESTREAMER_PASSWORD']}")
+    print()
+    print("[OBS 配信設定]")
+    print(f"  サーバー      : rtmp://{fqdn}:1935/live/")
+    print(f"  ストリームキー: {stream_key}")
+else:
+    print("[OBS 配信設定]  ※ start 後にサーバー URL が確定します")
+    print(f"  ストリームキー: {stream_key}  (固定値・変わらない)")
+
+print()
+print("[配信先チェック]  各プラットフォームのストリームキー有効期限を確認")
+for dest in outputs:
+    print(f"  [ ] {dest}")
+
+print()
+print("[配信開始手順]")
+print("  1. 上記 OBS 設定を入力して「配信開始」")
+print("  2. Restreamer Web UI でプロセスが Running になることを確認")
+print("  3. 各プラットフォームで映像が届くか確認")
+PYEOF
+}
+
 cmd_logs() {
     az container logs \
         --resource-group "$RESOURCE_GROUP" \
@@ -330,9 +416,10 @@ done
 shift $((OPTIND - 1))
 
 case "${1:-}" in
-    start)  cmd_start ;;
-    stop)   cmd_stop ;;
-    status) cmd_status ;;
-    logs)   cmd_logs ;;
-    *)      usage ;;
+    start)     cmd_start ;;
+    stop)      cmd_stop ;;
+    status)    cmd_status ;;
+    checklist) cmd_checklist ;;
+    logs)      cmd_logs ;;
+    *)         usage ;;
 esac
